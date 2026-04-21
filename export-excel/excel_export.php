@@ -18,6 +18,32 @@ header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; style
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title><?= t('excel_export_title') ?></title>
 <link rel="stylesheet" href="assets/excel.css">
+<style>
+/* ── Inventory card redirection ── */
+.type-card-link { cursor: pointer; }
+.type-card-anchor {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px 16px; border-radius: var(--radius-md);
+  border: 2px solid var(--inner-border); background: var(--inner-bg);
+  text-decoration: none; height: 100%;
+  transition: all .15s var(--ease);
+}
+.type-card-anchor:hover {
+  border-color: var(--red);
+  background: var(--red-a12, rgba(224,60,60,.12));
+}
+.type-card-anchor .type-icon { font-size: 22px; flex-shrink: 0; margin-top: 1px; }
+.type-card-anchor .type-info { flex: 1; }
+.type-card-anchor .type-name { font-size: 13px; font-weight: 700; color: var(--text); }
+.type-card-anchor .type-desc { font-size: 11px; color: var(--text3); margin-top: 2px; line-height: 1.4; }
+.type-link-hint {
+  font-size: 10px; font-weight: 700; color: var(--red);
+  margin-top: 5px; letter-spacing: .04em;
+  opacity: 0; transform: translateX(-4px);
+  transition: all .15s;
+}
+.type-card-anchor:hover .type-link-hint { opacity: 1; transform: translateX(0); }
+</style>
 </head>
 <body class="dark-theme">
 
@@ -71,15 +97,15 @@ header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; style
               </label>
             </div>
 
-            <div class="type-card">
-              <input type="radio" id="r-inv" name="report_type" value="inventory">
-              <label for="r-inv">
+            <div class="type-card type-card-link">
+              <a href="data-preview/index.php" class="type-card-anchor">
                 <span class="type-icon">&#128203;</span>
                 <div class="type-info">
                   <div class="type-name"><?= t('excel_report_type_inventory') ?></div>
                   <div class="type-desc"><?= t('excel_inventory_desc', 'Inventario de hardware y software') ?></div>
+                  <div class="type-link-hint">→ Armar reporte personalizado</div>
                 </div>
-              </label>
+              </a>
             </div>
 
             <div class="type-card">
@@ -104,24 +130,6 @@ header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; style
               </label>
             </div>
 
-          </div>
-        </div>
-
-        <!-- OPCIONES INVENTARIO -->
-        <div id="inv-options" class="collapse-panel">
-          <div class="field-label"><?= t('excel_inventory_columns') ?></div>
-          <div class="check-grid">
-            <label class="check-item"><input type="checkbox" name="columns[availability]" checked><span><?= t('excel_col_availability') ?></span></label>
-            <label class="check-item"><input type="checkbox" name="columns[os]" checked><span><?= t('excel_col_os') ?></span></label>
-            <label class="check-item"><input type="checkbox" name="columns[device_type]" checked><span><?= t('excel_col_device_type') ?></span></label>
-            <label class="check-item"><input type="checkbox" name="columns[area_responsable]" checked><span><?= t('excel_col_area') ?></span></label>
-            <label class="check-item"><input type="checkbox" name="columns[localidad]" checked><span><?= t('excel_col_location') ?></span></label>
-            <label class="check-item"><input type="checkbox" name="columns[uptime]" checked><span><?= t('excel_col_uptime') ?></span></label>
-            <label class="check-item"><input type="checkbox" name="columns[total_ram]" checked><span><?= t('excel_col_ram_total') ?></span></label>
-            <label class="check-item"><input type="checkbox" name="columns[cpu_cores]" checked><span>CPU/VCPU</span></label>
-            <label class="check-item"><input type="checkbox" name="columns[cpu_stats]" checked><span><?= t('excel_col_cpu_stats') ?></span></label>
-            <label class="check-item"><input type="checkbox" name="columns[mem_stats]" checked><span><?= t('excel_col_mem_stats') ?></span></label>
-            <label class="check-item"><input type="checkbox" name="columns[disks]" checked><span><?= t('excel_col_disks') ?></span></label>
           </div>
         </div>
 
@@ -288,13 +296,12 @@ const itemsPerPage = 10;
 })();
 
 // ── Tipo de reporte → mostrar paneles ─────────────────────────────────────────
-const SHOW_INV    = ['inventory'];
+const SHOW_INV    = [];
 const SHOW_PEAKS  = ['peaks_report'];
-const SHOW_COMMON = ['inventory','problem_report','peaks_report'];
+const SHOW_COMMON = ['problem_report','peaks_report'];
 
 function updatePanels() {
   const val = $('input[name=report_type]:checked')?.value || 'host_list';
-  $('#inv-options').classList.toggle('open',    SHOW_INV.includes(val));
   $('#peaks-options').classList.toggle('open',  SHOW_PEAKS.includes(val));
   $('#common-options').classList.toggle('open', SHOW_COMMON.includes(val));
 }
@@ -401,7 +408,7 @@ document.getElementById('excel-client-tz').value = Intl.DateTimeFormat().resolve
 $('#form-excel-export')?.addEventListener('submit', (e) => {
   const alertEl  = document.getElementById('excel-alert');
   const reportType = document.querySelector('input[name=report_type]:checked')?.value || 'host_list';
-  const needsHosts = ['inventory','problem_report','peaks_report'].includes(reportType);
+  const needsHosts = ['problem_report','peaks_report'].includes(reportType);
   const hosts  = $('#ta-hosts')?.value.trim();
   const groups = $('#ta-groups')?.value.trim();
   if (needsHosts && !hosts && !groups) {

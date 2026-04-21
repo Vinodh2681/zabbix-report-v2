@@ -12,7 +12,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/lib/ZabbixApiFactory.php';
 
 try {
-    $api = ZabbixApiFactory::create(ZABBIX_API_URL, $_SESSION['zbx_user'], $_SESSION['zbx_pass'], ['timeout'=>20]);
+    $api = ZabbixApiFactory::create(ZABBIX_API_URL, $_SESSION['zbx_user'], $_SESSION['zbx_pass'], ['timeout'=>45]);
 } catch (Throwable $e) {
     if (isset($_GET['action'])) { header('Content-Type: application/json'); echo json_encode(['error'=>$e->getMessage()]); exit; }
     header('Location: login.php'); exit;
@@ -139,28 +139,34 @@ if (isset($_GET['action']) && $_GET['action'] === 'refresh') {
     if (!is_array($items)) $items = [];
 
     // Obtener ultimo valor de history para items sin lastvalue
+    // Se procesan en lotes de 50 para evitar timeouts en consultas masivas
     $need_history = [];
     foreach ($items as $iid => $item) {
         if ($item['lastclock'] == 0) $need_history[] = $iid;
     }
     if ($need_history) {
-        $hist = $api->call('history.get', [
-            'output'   => ['itemid','value','clock'],
-            'itemids'  => $need_history,
-            'sortfield'=> 'clock',
-            'sortorder'=> 'DESC',
-            'limit'    => count($need_history),
-        ]);
-        if (is_array($hist)) {
-            $latest = [];
-            foreach ($hist as $h) {
-                if (!isset($latest[$h['itemid']])) $latest[$h['itemid']] = $h;
-            }
-            foreach ($latest as $iid => $h) {
-                if (isset($items[$iid])) {
-                    $items[$iid]['lastvalue'] = $h['value'];
-                    $items[$iid]['lastclock'] = $h['clock'];
+        $batch_size = 50;
+        $latest     = [];
+        $chunks     = array_chunk($need_history, $batch_size);
+        foreach ($chunks as $chunk) {
+            // Limit = 5 registros por item del lote (suficiente para obtener el ultimo de cada uno)
+            $hist = $api->call('history.get', [
+                'output'    => ['itemid','value','clock'],
+                'itemids'   => $chunk,
+                'sortfield' => 'clock',
+                'sortorder' => 'DESC',
+                'limit'     => count($chunk) * 5,
+            ]);
+            if (is_array($hist)) {
+                foreach ($hist as $h) {
+                    if (!isset($latest[$h['itemid']])) $latest[$h['itemid']] = $h;
                 }
+            }
+        }
+        foreach ($latest as $iid => $h) {
+            if (isset($items[$iid])) {
+                $items[$iid]['lastvalue'] = $h['value'];
+                $items[$iid]['lastclock'] = $h['clock'];
             }
         }
     }

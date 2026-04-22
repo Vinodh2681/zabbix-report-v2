@@ -861,155 +861,218 @@ try {
 
         case 'peaks_report':
             $peak_threshold = 90.0;
-            
+
             $hostIdsFromModal = isset($_POST['hostids']) ? array_filter(explode(',', $_POST['hostids'])) : [];
-            $manualHostNames = collect_values(['hostnames']);
+            $manualHostNames  = collect_values(['hostnames']);
             $hostGroupIdsFromModal = isset($_POST['hostgroupids']) ? array_filter(explode(',', $_POST['hostgroupids'])) : [];
             $manualGroupNames = collect_values(['hostgroups']);
-            
-            $hostIdsFromNames = []; 
-            if (!empty($manualHostNames)) { 
-                $hostMap = $api->getHostsByNames($manualHostNames); 
-                $hostIdsFromNames = array_values($hostMap); 
+
+            $hostIdsFromNames = [];
+            if (!empty($manualHostNames)) {
+                $hostMap = $api->getHostsByNames($manualHostNames);
+                $hostIdsFromNames = array_values($hostMap);
             }
-            
-            $groupIdsFromNames = []; 
-            if (!empty($manualGroupNames)) { 
-                $groups = $api->call('hostgroup.get', ['output' => ['groupid'], 'filter' => ['name' => $manualGroupNames]]); 
-                if (is_array($groups)) { $groupIdsFromNames = array_column($groups, 'groupid'); } 
+
+            $groupIdsFromNames = [];
+            if (!empty($manualGroupNames)) {
+                $groups = $api->call('hostgroup.get', ['output' => ['groupid'], 'filter' => ['name' => $manualGroupNames]]);
+                if (is_array($groups)) { $groupIdsFromNames = array_column($groups, 'groupid'); }
             }
-            
+
             $finalGroupIds = array_unique(array_merge($hostGroupIdsFromModal, $groupIdsFromNames));
-            
-            $hostIdsFromGroups = []; 
-            if (!empty($finalGroupIds)) { 
-                $hostsFromGroups = $api->call('host.get', [ 'output' => ['hostid'], 'groupids' => $finalGroupIds ]); 
-                if (is_array($hostsFromGroups)) { $hostIdsFromGroups = array_column($hostsFromGroups, 'hostid'); } 
+
+            $hostIdsFromGroups = [];
+            if (!empty($finalGroupIds)) {
+                $hostsFromGroups = $api->call('host.get', ['output' => ['hostid'], 'groupids' => $finalGroupIds]);
+                if (is_array($hostsFromGroups)) { $hostIdsFromGroups = array_column($hostsFromGroups, 'hostid'); }
             }
-            
+
             $hostIds = array_unique(array_merge($hostIdsFromModal, $hostIdsFromNames, $hostIdsFromGroups));
             if (empty($hostIds)) { die(t('excel_err_no_hosts')); }
-            
+
             $headers = [t('excel_header_host'), t('excel_header_metric'), t('excel_header_date'), t('excel_header_peak_value'), t('excel_header_peak_time')];
             $data = [];
-            
-            $cpu_key_priority = ['system.cpu.util', 'perf_counter["\\Processor(_Total)\\% Processor Time"]'];
-            $mem_used_keys = ['vm.memory.utilization', 'vm.memory.size[pused]'];
-            $mem_available_keys = ['vm.memory.size[pavailable]'];
-            $keys_to_search = array_unique(array_merge($cpu_key_priority, $mem_used_keys, $mem_available_keys));
-            
+
             $hosts_info = $api->call('host.get', ['hostids' => $hostIds, 'output' => ['name', 'hostid']]);
             $host_map = []; foreach ($hosts_info as $h) { $host_map[$h['hostid']] = $h; }
-            
-            $items = $api->call('item.get', [ 
-                'output' => ['itemid', 'key_', 'hostid', 'value_type', 'units'], 
-                'hostids' => $hostIds, 
-                'webitems' => true, 
-                'search' => ['key_' => $keys_to_search], 
-                'searchByAny' => true 
+
+            // ── Búsqueda por SUBSTRING de key ────────────────────────────────
+            // Cubre cualquier vendor sin importar el prefijo:
+            //   Linux:   system.cpu.util,       vm.memory.utilization
+            //   Juniper: juniper.mx.cpu.util,    juniper.mx.memory.util
+            //   Cisco:   cisco.cpu.util,         cisco.memory.utilization
+            //   Windows: perf_counter[...Processor...]
+
+            // CPU: buscar cualquier key que contenga "cpu.util"
+            $items_cpu = $api->call('item.get', [
+                'output'      => ['itemid', 'key_', 'name', 'hostid', 'value_type', 'units'],
+                'hostids'     => $hostIds,
+                'webitems'    => true,
+                'filter'      => ['value_type' => ['0', '3']],
+                'search'      => ['key_' => ['cpu.util']],
+                'searchByAny' => true,
             ]);
-            $items_by_host = []; foreach ($items as $item) { $items_by_host[$item['hostid']][$item['key_']] = $item; }
-            
-            $getDailyPeaks = function(array $item, int $from_ts, int $to_ts, bool $invert_value = false) use ($api): array {
-                $history_type = (int)$item['value_type'];
-                if ($history_type !== 0 && $history_type !== 3) return [];
+            $items_cpu = is_array($items_cpu) ? $items_cpu : [];
+
+            // CPU Windows: perf_counter (solo si no tiene cpu.util)
+            $items_win_cpu = $api->call('item.get', [
+                'output'      => ['itemid', 'key_', 'name', 'hostid', 'value_type', 'units'],
+                'hostids'     => $hostIds,
+                'webitems'    => true,
+                'filter'      => ['value_type' => ['0', '3']],
+                'search'      => ['key_' => ['perf_counter']],
+                'searchByAny' => true,
+            ]);
+            $items_win_cpu = is_array($items_win_cpu) ? $items_win_cpu : [];
+
+            // MEM usada: cualquier key que contenga "memory.utilization", "memory.util" o "memory.size[pused]"
+            $items_mem_used = $api->call('item.get', [
+                'output'      => ['itemid', 'key_', 'name', 'hostid', 'value_type', 'units'],
+                'hostids'     => $hostIds,
+                'webitems'    => true,
+                'filter'      => ['value_type' => ['0', '3']],
+                'search'      => ['key_' => ['memory.utilization', 'memory.util', 'memory.size[pused]']],
+                'searchByAny' => true,
+            ]);
+            $items_mem_used = is_array($items_mem_used) ? $items_mem_used : [];
+
+            // MEM disponible: se invertirá (100 - valor)
+            $items_mem_avail = $api->call('item.get', [
+                'output'      => ['itemid', 'key_', 'name', 'hostid', 'value_type', 'units'],
+                'hostids'     => $hostIds,
+                'webitems'    => true,
+                'filter'      => ['value_type' => ['0', '3']],
+                'search'      => ['key_' => ['memory.size[pavailable]', 'memory.size[available]']],
+                'searchByAny' => true,
+            ]);
+            $items_mem_avail = is_array($items_mem_avail) ? $items_mem_avail : [];
+
+            // Si hay varios items que matchean para el mismo host (ej: cpu.util y cpu.util[,user])
+            // elegir el mejor: primero % de unidades, luego key más corta (menos params = más genérica)
+            $pickBest = function(?array $existing, array $candidate): array {
+                if ($existing === null) return $candidate;
+                $ex_pct = ($existing['units']  === '%');
+                $ca_pct = ($candidate['units'] === '%');
+                if ($ca_pct && !$ex_pct) return $candidate;
+                if ($ex_pct && !$ca_pct) return $existing;
+                return strlen($candidate['key_']) < strlen($existing['key_']) ? $candidate : $existing;
+            };
+
+            $cpu_by_host     = []; // hostid => item
+            $mem_by_host     = []; // hostid => item
+            $mem_invert_host = []; // hostid => bool
+
+            foreach ($items_cpu as $it) {
+                // Confirmar que la key realmente contiene cpu.util
+                if (stripos($it['key_'], 'cpu.util') === false) continue;
+                $cpu_by_host[$it['hostid']] = $pickBest($cpu_by_host[$it['hostid']] ?? null, $it);
+            }
+            // Windows perf_counter solo para hosts que aún no tienen cpu.util
+            foreach ($items_win_cpu as $it) {
+                if (isset($cpu_by_host[$it['hostid']])) continue;
+                if (stripos($it['key_'], 'Processor') !== false || stripos($it['name'], 'CPU') !== false) {
+                    $cpu_by_host[$it['hostid']] = $pickBest($cpu_by_host[$it['hostid']] ?? null, $it);
+                }
+            }
+
+            // Memoria "usada" tiene prioridad sobre "disponible"
+            foreach ($items_mem_used as $it) {
+                $match = stripos($it['key_'], 'memory.utilization') !== false
+                      || stripos($it['key_'], 'memory.util')        !== false
+                      || stripos($it['key_'], 'memory.size[pused]') !== false;
+                if (!$match) continue;
+                $mem_by_host[$it['hostid']]     = $pickBest($mem_by_host[$it['hostid']] ?? null, $it);
+                $mem_invert_host[$it['hostid']] = false;
+            }
+            // Memoria "disponible" solo para hosts sin item de "usada"
+            foreach ($items_mem_avail as $it) {
+                if (isset($mem_by_host[$it['hostid']]) && $mem_invert_host[$it['hostid']] === false) continue;
+                $mem_by_host[$it['hostid']]     = $pickBest($mem_by_host[$it['hostid']] ?? null, $it);
+                $mem_invert_host[$it['hostid']] = true;
+            }
+
+            // ── getDailyPeaks: SIEMPRE history.get para precisión exacta ────
+            // trend.get NO es confiable para peaks porque value_max es el máximo
+            // de la hora completa, puede incluir momentos fuera del rango pedido.
+            // Para rangos largos se aumenta el limit y se usa sortorder DESC + group por día.
+            $getDailyPeaks = function(array $item, int $from_ts, int $to_ts, bool $invert = false) use ($api): array {
+                $ht = (int)$item['value_type'];
+                if ($ht !== 0 && $ht !== 3) return [];
                 try {
-                    $params = [ 
-                        'output' => 'extend', 
-                        'history' => $history_type, 
-                        'itemids' => [(string)$item['itemid']], 
-                        'time_from' => (int)$from_ts, 
-                        'time_till' => (int)$to_ts, 
-                        'sortfield' => 'clock', 
-                        'sortorder' => 'ASC' 
-                    ];
-                    $history = $api->call('history.get', $params);
-                    if (empty($history) || !is_array($history)) return [];
-                    $daily_peaks = [];
-                    foreach ($history as $entry) {
-                        $day = date('Y-m-d', (int)$entry['clock']);
-                        $value = (float)$entry['value'];
-                        if ($invert_value) { $value = 100.0 - $value; }
-                        if (!isset($daily_peaks[$day]) || $value > $daily_peaks[$day]['value']) {
-                            $daily_peaks[$day] = [ 'value' => $value, 'clock' => (int)$entry['clock'], 'units' => $item['units'] ];
-                        }
+                    $range_days = ($to_ts - $from_ts) / 86400;
+                    // Limit dinámico: ~1 dato/min * 1440 min/día * días, máximo 50000
+                    $limit = min(50000, max(5000, (int)ceil($range_days * 1500)));
+                    $rows = $api->call('history.get', [
+                        'output'    => ['clock', 'value'],
+                        'history'   => $ht,
+                        'itemids'   => [(string)$item['itemid']],
+                        'time_from' => $from_ts,
+                        'time_till' => $to_ts,
+                        'sortfield' => 'clock',
+                        'sortorder' => 'ASC',
+                        'limit'     => $limit,
+                    ]);
+                    if (empty($rows) || !is_array($rows)) return [];
+                    $peaks = [];
+                    foreach ($rows as $r) {
+                        $day = date('Y-m-d', (int)$r['clock']);
+                        $v   = $invert ? 100.0 - (float)$r['value'] : (float)$r['value'];
+                        if (!isset($peaks[$day]) || $v > $peaks[$day]['value'])
+                            $peaks[$day] = ['value' => $v, 'clock' => (int)$r['clock'], 'units' => $item['units']];
                     }
-                    return $daily_peaks;
+                    return $peaks;
                 } catch (Exception $e) {
-                    error_log("Zabbix Daily Peak Report Error: " . $e->getMessage());
+                    error_log("Peak Report Error: " . $e->getMessage());
                     return [];
                 }
             };
-            
+
+            // ── Generar filas CSV ────────────────────────────────────────────
             foreach ($hostIds as $hid) {
                 if (!isset($host_map[$hid])) continue;
                 $host_name = $host_map[$hid]['name'];
-                $host_items = $items_by_host[$hid] ?? [];
-                
+
                 // CPU
-                $found_cpu_item = null;
-                foreach ($cpu_key_priority as $k) {
-                    if (isset($host_items[$k])) { $found_cpu_item = $host_items[$k]; break; }
-                }
-                $metric_name_cpu = t('excel_metric_cpu');
-                if ($found_cpu_item) {
-                    $all_daily_peaks = $getDailyPeaks($found_cpu_item, $from_ts, $to_ts, false);
-                    $critical_peaks = [];
-                    if ($found_cpu_item['units'] === '%') {
-                        $critical_peaks = array_filter($all_daily_peaks, function($p) use ($peak_threshold) {
-                            return $p['value'] >= $peak_threshold;
-                        });
-                    }
-                    if (!empty($critical_peaks)) {
-                        foreach ($critical_peaks as $day => $peak) {
-                            $data[] = [ $host_name, $metric_name_cpu, $day, round($peak['value'], 2) . ' ' . $peak['units'], date('H:i:s', $peak['clock']) ];
-                        }
-                    } elseif (!empty($all_daily_peaks)) {
-                        $single_max_peak = array_reduce($all_daily_peaks, function($a, $b) {
-                            return $a['value'] > $b['value'] ? $a : $b;
-                        });
-                        $data[] = [ $host_name, $metric_name_cpu, date('Y-m-d', $single_max_peak['clock']), round($single_max_peak['value'], 2) . ' ' . $single_max_peak['units'], date('H:i:s', $single_max_peak['clock']) ];
+                $metric_cpu = t('excel_metric_cpu');
+                $cpu_item   = $cpu_by_host[$hid] ?? null;
+                if ($cpu_item) {
+                    $peaks    = $getDailyPeaks($cpu_item, $from_ts, $to_ts, false);
+                    $critical = ($cpu_item['units'] === '%')
+                        ? array_filter($peaks, fn($p) => $p['value'] >= $peak_threshold)
+                        : [];
+                    if (!empty($critical)) {
+                        foreach ($critical as $day => $p)
+                            $data[] = [$host_name, $metric_cpu, $day, round($p['value'], 2) . ' ' . ($p['units'] ?: '%'), date('H:i:s', $p['clock'])];
+                    } elseif (!empty($peaks)) {
+                        $max = array_reduce($peaks, fn($a,$b) => $a['value'] > $b['value'] ? $a : $b);
+                        $data[] = [$host_name, $metric_cpu, date('Y-m-d', $max['clock']), round($max['value'], 2) . ' ' . ($max['units'] ?: '%'), date('H:i:s', $max['clock'])];
                     } else {
-                        $data[] = [$host_name, $metric_name_cpu, "N/A", t('excel_val_no_data'), "N/A"];
+                        $data[] = [$host_name, $metric_cpu, 'N/A', t('excel_val_no_data'), 'N/A'];
                     }
                 } else {
-                    $data[] = [$host_name, $metric_name_cpu, "N/A", t('excel_val_no_item'), "N/A"];
+                    $data[] = [$host_name, $metric_cpu, 'N/A', t('excel_val_no_item'), 'N/A'];
                 }
-                
+
                 // Memoria
-                $metric_name_mem = t('excel_metric_mem');
-                $found_mem_item = null;
-                $invert_mem_metric = false;
-                foreach ($mem_used_keys as $k) {
-                    if (isset($host_items[$k])) { $found_mem_item = $host_items[$k]; break; }
-                }
-                if (!$found_mem_item) {
-                    foreach ($mem_available_keys as $k) {
-                        if (isset($host_items[$k])) { $found_mem_item = $host_items[$k]; $invert_mem_metric = true; break; }
-                    }
-                }
-                if ($found_mem_item) {
-                    $all_daily_peaks = $getDailyPeaks($found_mem_item, $from_ts, $to_ts, $invert_mem_metric);
-                    $critical_peaks = [];
-                    if ($found_mem_item['units'] === '%') {
-                        $critical_peaks = array_filter($all_daily_peaks, function($p) use ($peak_threshold) {
-                            return $p['value'] >= $peak_threshold;
-                        });
-                    }
-                    if (!empty($critical_peaks)) {
-                        foreach ($critical_peaks as $day => $peak) {
-                            $data[] = [ $host_name, $metric_name_mem, $day, round($peak['value'], 2) . ' %', date('H:i:s', $peak['clock']) ];
-                        }
-                    } elseif (!empty($all_daily_peaks)) {
-                        $single_max_peak = array_reduce($all_daily_peaks, function($a, $b) {
-                            return $a['value'] > $b['value'] ? $a : $b;
-                        });
-                        $data[] = [ $host_name, $metric_name_mem, date('Y-m-d', $single_max_peak['clock']), round($single_max_peak['value'], 2) . ' %', date('H:i:s', $single_max_peak['clock']) ];
+                $metric_mem = t('excel_metric_mem');
+                $mem_item   = $mem_by_host[$hid]     ?? null;
+                $invert_mem = $mem_invert_host[$hid] ?? false;
+                if ($mem_item) {
+                    $peaks    = $getDailyPeaks($mem_item, $from_ts, $to_ts, $invert_mem);
+                    $critical = ($mem_item['units'] === '%')
+                        ? array_filter($peaks, fn($p) => $p['value'] >= $peak_threshold)
+                        : [];
+                    if (!empty($critical)) {
+                        foreach ($critical as $day => $p)
+                            $data[] = [$host_name, $metric_mem, $day, round($p['value'], 2) . ' %', date('H:i:s', $p['clock'])];
+                    } elseif (!empty($peaks)) {
+                        $max = array_reduce($peaks, fn($a,$b) => $a['value'] > $b['value'] ? $a : $b);
+                        $data[] = [$host_name, $metric_mem, date('Y-m-d', $max['clock']), round($max['value'], 2) . ' ' . ($max['units'] ?: '%'), date('H:i:s', $max['clock'])];
                     } else {
-                        $data[] = [$host_name, $metric_name_mem, "N/A", t('excel_val_no_data'), "N/A"];
+                        $data[] = [$host_name, $metric_mem, 'N/A', t('excel_val_no_data'), 'N/A'];
                     }
                 } else {
-                    $data[] = [$host_name, $metric_name_mem, "N/A", t('excel_val_no_item'), "N/A"];
+                    $data[] = [$host_name, $metric_mem, 'N/A', t('excel_val_no_item'), 'N/A'];
                 }
             }
             outputCsv('zabbix_smart_peaks_report_' . date('Ymd') . '.csv', $headers, $data, $preHeader);

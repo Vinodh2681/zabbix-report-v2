@@ -103,8 +103,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'refresh') {
     $name      = trim($_GET['name'] ?? '');
     $sort      = in_array($_GET['sort'] ?? '', ['host','name']) ? $_GET['sort'] : 'name';
     $sortorder = ($_GET['sortorder'] ?? '') === 'DESC' ? 'DESC' : 'ASC';
-    $page      = 1;
-    $per_page  = 2000; // Traer todos - paginacion en el cliente
 
     // Resolver hosts
     $host_params = ['output' => ['hostid','name','status'], 'preservekeys' => true];
@@ -120,64 +118,68 @@ if (isset($_GET['action']) && $_GET['action'] === 'refresh') {
         exit;
     }
 
-    // Obtener items
-    $item_params = [
-        'output'       => ['itemid','hostid','name','key_','lastvalue','lastclock','value_type','units','delay','state'],
-        'hostids'      => array_keys($hosts),
-        'filter'       => ['status' => 0], // ITEM_STATUS_ACTIVE
-        'sortfield'    => $sort === 'host' ? 'itemid' : 'name',
-        'sortorder'    => $sortorder,
-        'preservekeys' => true,
-        'webitems'     => true,
-    ];
-    if ($name !== '') {
-        $item_params['search']                = ['name' => $name];
-        $item_params['searchWildcardsEnabled']= true;
+    // Obtener items en LOTES de 20 hosts para evitar timeout en instalaciones grandes
+    // Una sola llamada con 200+ hosts puede tardar más de 45s — lotes pequeños son rápidos
+    $all_host_ids = array_keys($hosts);
+    $batch_size   = 20;
+    $chunks       = array_chunk($all_host_ids, $batch_size);
+    $items        = [];
+
+    foreach ($chunks as $chunk) {
+        $item_params = [
+            'output'       => ['itemid','hostid','name','key_','lastvalue','lastclock','value_type','units','delay','state'],
+            'hostids'      => $chunk,
+            'filter'       => ['status' => 0],
+            'preservekeys' => true,
+            'webitems'     => true,
+        ];
+        if ($name !== '') {
+            $item_params['search']                = ['name' => $name];
+            $item_params['searchWildcardsEnabled']= true;
+        }
+        $batch = $api->call('item.get', $item_params);
+        if (is_array($batch)) {
+            $items = array_merge($items, $batch);
+        }
     }
 
-    $items = $api->call('item.get', $item_params);
-    if (!is_array($items)) $items = [];
-
-    // Items con lastclock == 0 simplemente no tienen datos recientes — se muestran como '—'
-    // No se hace history.get adicional porque en instalaciones grandes causa timeout
-
-    // Ordenar por host name si se pide
+    // Ordenar
     if ($sort === 'host') {
-        uasort($items, function($a, $b) use ($hosts, $sortorder) {
+        usort($items, function($a, $b) use ($hosts, $sortorder) {
             $ha = $hosts[$a['hostid']]['name'] ?? '';
             $hb = $hosts[$b['hostid']]['name'] ?? '';
             $c  = strcasecmp($ha, $hb);
             return $sortorder === 'DESC' ? -$c : $c;
         });
+    } else {
+        usort($items, function($a, $b) use ($sortorder) {
+            $c = strcasecmp($a['name'] ?? '', $b['name'] ?? '');
+            return $sortorder === 'DESC' ? -$c : $c;
+        });
     }
-
-    $total = count($items);
-    $paged = $items; // Sin paginacion server-side, el cliente pagina
 
     // Formatear valores
     $result = [];
-    foreach ($paged as $item) {
-        $host      = $hosts[$item['hostid']] ?? null;
-        $val       = $item['lastvalue'];
-        $clock     = (int)$item['lastclock'];
-        $ago       = $clock > 0 ? formatAge(time() - $clock) : '—';
-        $fval      = formatValue($val, (int)$item['value_type'], $item['units']);
-        $result[]  = [
+    foreach ($items as $item) {
+        $host  = $hosts[$item['hostid']] ?? null;
+        $val   = $item['lastvalue'];
+        $clock = (int)$item['lastclock'];
+        $result[] = [
             'itemid'    => $item['itemid'],
             'hostid'    => $item['hostid'],
             'host'      => $host ? $host['name'] : '',
             'name'      => $item['name'],
             'key_'      => $item['key_'],
-            'lastvalue' => $fval,
+            'lastvalue' => formatValue($val, (int)$item['value_type'], $item['units']),
             'rawvalue'  => $val,
             'lastclock' => $clock,
-            'ago'       => $ago,
+            'ago'       => $clock > 0 ? formatAge(time() - $clock) : '—',
             'units'     => $item['units'],
             'state'     => (int)$item['state'],
         ];
     }
 
-    echo json_encode(['items'=>$result,'total'=>$total,'hosts'=>array_values($hosts),'page'=>$page,'per_page'=>$per_page]);
+    echo json_encode(['items'=>$result,'total'=>count($result),'hosts'=>array_values($hosts)]);
     exit;
 }
 

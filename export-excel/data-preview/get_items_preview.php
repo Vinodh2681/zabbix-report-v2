@@ -22,8 +22,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['error' => 'Method not allowed']); exit;
 }
 
-set_time_limit(30);
-ini_set('memory_limit', '256M');
+set_time_limit(300);
+ini_set('memory_limit', '512M');
 
 require_once __DIR__ . '/../../lib/i18n.php';
 require_once __DIR__ . '/../../config.php';
@@ -74,7 +74,7 @@ try {
         ZABBIX_API_URL,
         $_SESSION['zbx_user'],
         $_SESSION['zbx_pass'],
-        ['timeout' => 45, 'verify_ssl' => defined('VERIFY_SSL') ? VERIFY_SSL : false]
+        ['timeout' => 120, 'verify_ssl' => defined('VERIFY_SSL') ? VERIFY_SSL : false]
     );
 
     $action = $_POST['action'] ?? 'get_host_items';
@@ -91,8 +91,8 @@ try {
             exit;
         }
 
-        // Obtener items en lotes de 20 hosts — evita timeout en instalaciones grandes
-        $batch_size  = 20;
+        // Lotes de 50 hosts — soporta 20000+ items sin timeout
+        $batch_size  = 50;
         $host_chunks = array_chunk($hostIds, $batch_size);
         $reg_all     = [];
         $disc_all    = [];

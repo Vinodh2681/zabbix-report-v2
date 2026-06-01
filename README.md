@@ -6,12 +6,7 @@
   <sub>Open source. Free forever. Built for the Zabbix community.</sub>
 </p>
 
----
 
-> **If this tool saves you time at work, a ⭐ star takes 2 seconds and helps others find it.**  
-> Hundreds of people use this tool every week. Only a handful have ever clicked star. Be one of them.
-
----
 
 ## What is this?
 
@@ -96,22 +91,6 @@ Have an improvement? Pull requests are welcome.
 
 **Please open an issue before submitting a large PR** so we can discuss the approach first.
 
----
-
-## 💙 Support the project
-
-This tool is free and always will be. If it saves you time at work:
-
-**⭐ Star the repo** — it costs nothing and helps more people find it  
-**☕ Buy me a coffee** — keeps me motivated to keep improving it
-
-<p align="center">
-  <a href="https://paypal.me/axel250r">
-    <img src="https://img.shields.io/badge/Buy_me_a_coffee-PayPal-00457C?logo=paypal&logoColor=white&style=for-the-badge" alt="Donate via PayPal">
-  </a>
-</p>
-
----
 
 <p align="center">
   <sub>© 2025–2026 Axel Del Canto •

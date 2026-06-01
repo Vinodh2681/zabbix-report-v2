@@ -76,7 +76,7 @@ A PHP web application that installs alongside your existing Zabbix server and ad
 
 Step-by-step guides (English & Spanish) in the dedicated how-to repository:
 
-👉 **[axel250r/How-To](https://github.com/axel250r/How-To)**
+👉 **[How-To](https://github.com/Vinodh2681/zabbix-report-v2/blob/main/How%20to%20use%20Zabbix%20PDF%20Report%20-%20EN.docx)**
 
 ---
 

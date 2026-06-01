@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 // --- Configuración ---
-const DEFAULT_LANG = 'es';
+const DEFAULT_LANG = 'en';
 const SUPPORTED_LANGS = ['es', 'en'];
 // ---------------------
 
